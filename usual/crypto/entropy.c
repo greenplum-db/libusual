@@ -22,6 +22,7 @@
 
 #ifdef HAVE_LINUX_RANDOM_H
 #include <sys/syscall.h>
+#include <linux/types.h>
 #include <linux/random.h>
 #endif
 

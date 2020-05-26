@@ -1,4 +1,3 @@
-
 AM_FEATURES = libusual
 
 SUBLOC = test
@@ -16,7 +15,6 @@ regtest_system_SOURCES = \
 	test_ctype.c \
 	test_cxalloc.c \
 	test_endian.c \
-	test_event.c \
 	test_fileutil.c \
 	test_fnmatch.c \
 	test_getopt.c \
@@ -45,14 +43,14 @@ regtest_system_SOURCES = \
 
 # build regtest_system against actual library
 regtest_system_LDADD = -static ../libusual.la
-regtest_system_LIBS = $(TLS_LIBS) $(LIBS)
+regtest_system_LIBS = $(TLS_LIBS) $(LIBEVENT_LIBS) $(LIBS)
 regtest_system_LDFLAGS = $(TLS_LDFLAGS)
-regtest_system_CPPFLAGS = -I.. -I. $(TLS_CPPFLAGS)
+regtest_system_CPPFLAGS = -I.. -I. $(TLS_CPPFLAGS) $(LIBEVENT_CFLAGS)
 
 # build regtest_compat as embedded project
 regtest_compat_EMBED_LIBUSUAL = 1
-regtest_compat_CPPFLAGS := -I.. -I. -DUSUAL_TEST_CONFIG $(TLS_CPPFLAGS)
-regtest_compat_LIBS = $(TLS_LIBS) $(LIBS)
+regtest_compat_CPPFLAGS := -I.. -I. -DUSUAL_TEST_CONFIG $(TLS_CPPFLAGS) $(LIBEVENT_CFLAGS)
+regtest_compat_LIBS = $(TLS_LIBS) $(LIBEVENT_LIBS) $(LIBS)
 regtest_compat_LDFLAGS = $(TLS_LDFLAGS)
 regtest_compat_SOURCES := $(regtest_system_SOURCES)
 nodist_regtest_compat_SOURCES = test_config.h
@@ -65,8 +63,8 @@ connect_CPPFLAGS = -I.. -I. $(TLS_CPPFLAGS)
 
 EXTRA_DIST = Makefile tinytest_demo.c force_compat.sed test_cfparser.ini
 
-noinst_PROGRAMS = regtest_system
-EXTRA_PROGRAMS = regtest_compat connect
+noinst_PROGRAMS = regtest_system connect
+EXTRA_PROGRAMS = regtest_compat
 
 include ../build.mk
 
@@ -79,10 +77,13 @@ clean: clean-local
 clean-local:
 	$(Q) $(RM) -r fmod_test
 
-run:
+check run:
 	@echo CC=$(CC) CFLAGS=$(CFLAGS)
 	$(MAKE) -C ..
-	$(MAKE) regtest_system regtest_compat
+	$(MAKE) all regtest_system regtest_compat
 	./regtest_system
 	./regtest_compat
 
+.PHONY: tags
+tags:
+	ctags $(regtest_system_SOURCES)

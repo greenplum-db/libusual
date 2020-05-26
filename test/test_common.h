@@ -1,4 +1,3 @@
-
 #include <usual/base.h>
 
 #include "tinytest.h"
@@ -7,6 +6,22 @@
 #define str_check(a, b) tt_str_op(a, ==, b)
 #define int_check(a, b) tt_int_op(a, ==, b)
 #define ull_check(a, b) tt_assert_op_type(a, ==, b, uint64_t, "%" PRIu64)
+
+#define str_any2(val, a, b) \
+	do { \
+		const char *res = (val); \
+		if (strcmp(res, a) && strcmp(res, b)) \
+			str_check(res, a); \
+	} while (0)
+
+#define str_any3(val, a, b, c) \
+	do { \
+		const char *res = (val); \
+		if (strcmp(res, a) && strcmp(res, b) && strcmp(res, c)) \
+			str_check(res, a); \
+	} while (0)
+
+const char *tdata(const char *fn);
 
 extern struct testcase_t aatree_tests[];
 extern struct testcase_t base_tests[];
@@ -42,4 +57,3 @@ extern struct testcase_t utf8_tests[];
 extern struct testcase_t wchar_tests[];
 
 extern unsigned long long test_seed1, test_seed2;
-

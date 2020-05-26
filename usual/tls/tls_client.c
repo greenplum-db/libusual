@@ -1,4 +1,4 @@
-/* $OpenBSD: tls_client.c,v 1.16 2015/03/21 15:35:15 sthen Exp $ */
+/* $OpenBSD$ */
 /*
  * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>
  *
@@ -20,8 +20,8 @@
 #ifdef USUAL_LIBSSL_FOR_TLS
 
 #include <limits.h>
-#include <netdb.h>
 
+#include <openssl/err.h>
 #include <openssl/x509.h>
 
 #include "tls_internal.h"
@@ -39,42 +39,6 @@ tls_client(void)
 	return (ctx);
 }
 
-static int
-tls_connect_host(struct tls *ctx, const char *host, const char *port,
-    int af, int flag)
-{
-	struct addrinfo hints, *res, *res0;
-	int s = -1;
-
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = af;
-	hints.ai_socktype = SOCK_STREAM;
-	hints.ai_flags = flag;
-
-	if ((s = getaddrinfo(host, port, &hints, &res0)) != 0) {
-		tls_set_error(ctx, "%s", gai_strerror(s));
-		return (-1);
-	}
-	for (res = res0; res; res = res->ai_next) {
-		s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-		if (s == -1) {
-			tls_set_error(ctx, "socket");
-			continue;
-		}
-		if (connect(s, res->ai_addr, res->ai_addrlen) == -1) {
-			tls_set_error(ctx, "connect");
-			close(s);
-			s = -1;
-			continue;
-		}
-
-		break;  /* Connected. */
-	}
-	freeaddrinfo(res0);
-
-	return (s);
-}
-
 int
 tls_connect(struct tls *ctx, const char *host, const char *port)
 {
@@ -85,6 +49,7 @@ int
 tls_connect_servername(struct tls *ctx, const char *host, const char *port,
     const char *servername)
 {
+	struct addrinfo hints, *res, *res0;
 	const char *h = NULL, *p = NULL;
 	char *hs = NULL, *ps = NULL;
 	int rv = -1, s = -1, ret;
@@ -109,8 +74,10 @@ tls_connect_servername(struct tls *ctx, const char *host, const char *port,
 			tls_set_errorx(ctx, "memory allocation failure");
 			goto err;
 		}
-		if (ret != 0)
-			port = HTTPS_PORT;
+		if (ret != 0) {
+			tls_set_errorx(ctx, "no port provided");
+			goto err;
+		}
 	}
 
 	h = (hs != NULL) ? hs : host;
@@ -125,9 +92,46 @@ tls_connect_servername(struct tls *ctx, const char *host, const char *port,
 	 * sure that connection attempts to numeric addresses and especially
 	 * 127.0.0.1 or ::1 loopback addresses are always possible.
 	 */
-	if ((s = tls_connect_host(ctx, h, p, AF_INET, AI_NUMERICHOST)) == -1 &&
-	    (s = tls_connect_host(ctx, h, p, AF_INET6, AI_NUMERICHOST)) == -1 &&
-	    (s = tls_connect_host(ctx, h, p, AF_UNSPEC, AI_ADDRCONFIG)) == -1)
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_socktype = SOCK_STREAM;
+
+	/* try as an IPv4 literal */
+	hints.ai_family = AF_INET;
+	hints.ai_flags = AI_NUMERICHOST;
+	if (getaddrinfo(h, p, &hints, &res0) != 0) {
+		/* try again as an IPv6 literal */
+		hints.ai_family = AF_INET6;
+		if (getaddrinfo(h, p, &hints, &res0) != 0) {
+			/* last try, with name resolution and save the error */
+			hints.ai_family = AF_UNSPEC;
+			hints.ai_flags = AI_ADDRCONFIG;
+			if ((s = getaddrinfo(h, p, &hints, &res0)) != 0) {
+				tls_set_error(ctx, "%s", gai_strerror(s));
+				goto err;
+			}
+		}
+	}
+
+	/* It was resolved somehow; now try connecting to what we got */
+	s = -1;
+	for (res = res0; res; res = res->ai_next) {
+		s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+		if (s == -1) {
+			tls_set_error(ctx, "socket");
+			continue;
+		}
+		if (connect(s, res->ai_addr, res->ai_addrlen) == -1) {
+			tls_set_error(ctx, "connect");
+			close(s);
+			s = -1;
+			continue;
+		}
+
+		break;  /* Connected. */
+	}
+	freeaddrinfo(res0);
+
+	if (s == -1)
 		goto err;
 
 	if (servername == NULL)
@@ -138,9 +142,11 @@ tls_connect_servername(struct tls *ctx, const char *host, const char *port,
 		goto err;
 	}
 
+	ctx->socket = s;
+
 	rv = 0;
 
-err:
+ err:
 	free(hs);
 	free(ps);
 
@@ -150,8 +156,6 @@ err:
 int
 tls_connect_socket(struct tls *ctx, int s, const char *servername)
 {
-	ctx->socket = s;
-
 	return tls_connect_fds(ctx, s, s, servername);
 }
 
@@ -159,20 +163,24 @@ int
 tls_connect_fds(struct tls *ctx, int fd_read, int fd_write,
     const char *servername)
 {
-	union { struct in_addr ip4; struct in6_addr ip6; } addrbuf;
-	int ret, err;
+	union tls_addr addrbuf;
+	int rv = -1;
 
 	if ((ctx->flags & TLS_CLIENT) == 0) {
 		tls_set_errorx(ctx, "not a client context");
 		goto err;
 	}
 
-	if (ctx->state & TLS_STATE_CONNECTING)
-		goto connecting;
-
 	if (fd_read < 0 || fd_write < 0) {
 		tls_set_errorx(ctx, "invalid file descriptors");
-		return (-1);
+		goto err;
+	}
+
+	if (servername != NULL) {
+		if ((ctx->servername = strdup(servername)) == NULL) {
+			tls_set_errorx(ctx, "out of memory");
+			goto err;
+		}
 	}
 
 	if ((ctx->ssl_ctx = SSL_CTX_new(SSLv23_client_method())) == NULL) {
@@ -182,12 +190,8 @@ tls_connect_fds(struct tls *ctx, int fd_read, int fd_write,
 
 	if (tls_configure_ssl(ctx) != 0)
 		goto err;
-
-	if (ctx->config->key_file || ctx->config->cert_file ||
-	    ctx->config->key_mem || ctx->config->cert_mem) {
-		if (tls_configure_keypair(ctx) != 0)
-			goto err;
-	}
+	if (tls_configure_keypair(ctx, ctx->ssl_ctx, ctx->config->keypair, 0) != 0)
+		goto err;
 
 	if (ctx->config->verify_name) {
 		if (servername == NULL) {
@@ -196,8 +200,14 @@ tls_connect_fds(struct tls *ctx, int fd_read, int fd_write,
 		}
 	}
 
-	if (tls_configure_verify(ctx) != 0)
+	if (ctx->config->verify_cert &&
+	    (tls_configure_ssl_verify(ctx, SSL_VERIFY_PEER) == -1))
 		goto err;
+
+	if (SSL_CTX_set_tlsext_status_cb(ctx->ssl_ctx, tls_ocsp_verify_callback) != 1) {
+		tls_set_errorx(ctx, "ssl OCSP verification setup failure");
+		goto err;
+	}
 
 	if ((ctx->ssl_conn = SSL_new(ctx->ssl_ctx)) == NULL) {
 		tls_set_errorx(ctx, "ssl connection failure");
@@ -210,6 +220,10 @@ tls_connect_fds(struct tls *ctx, int fd_read, int fd_write,
 	if (SSL_set_rfd(ctx->ssl_conn, fd_read) != 1 ||
 	    SSL_set_wfd(ctx->ssl_conn, fd_write) != 1) {
 		tls_set_errorx(ctx, "ssl file descriptor failure");
+		goto err;
+	}
+	if (SSL_set_tlsext_status_type(ctx->ssl_conn, TLSEXT_STATUSTYPE_ocsp) != 1) {
+		tls_set_errorx(ctx, "ssl OCSP extension setup failure");
 		goto err;
 	}
 
@@ -226,32 +240,52 @@ tls_connect_fds(struct tls *ctx, int fd_read, int fd_write,
 		}
 	}
 
-connecting:
-	if ((ret = SSL_connect(ctx->ssl_conn)) != 1) {
-		err = tls_ssl_error(ctx, ctx->ssl_conn, ret, "connect");
-		if (err == TLS_READ_AGAIN || err == TLS_WRITE_AGAIN) {
-			ctx->state |= TLS_STATE_CONNECTING;
-			return (err);
-		}
+	rv = 0;
+
+ err:
+	return (rv);
+}
+
+int
+tls_handshake_client(struct tls *ctx)
+{
+	X509 *cert = NULL;
+	int ssl_ret;
+	int rv = -1;
+
+	if ((ctx->flags & TLS_CLIENT) == 0) {
+		tls_set_errorx(ctx, "not a client context");
 		goto err;
 	}
-	ctx->state &= ~TLS_STATE_CONNECTING;
 
-	if (ctx->config->verify_name) {
-		struct tls_cert *cert = NULL;
-		ret = tls_get_peer_cert(ctx, &cert, NULL);
-		if (ret != 0)
-			goto err;
-		ret = tls_check_servername(ctx, cert, servername);
-		tls_cert_free(cert);
-		if (ret != 0)
-			goto err;
+	ERR_clear_error();
+	if ((ssl_ret = SSL_connect(ctx->ssl_conn)) != 1) {
+		rv = tls_ssl_error(ctx, ctx->ssl_conn, ssl_ret, "handshake");
+		goto err;
 	}
 
-	return (0);
+	if (ctx->config->verify_name) {
+		cert = SSL_get_peer_certificate(ctx->ssl_conn);
+		if (cert == NULL) {
+			tls_set_errorx(ctx, "no server certificate");
+			goto err;
+		}
+		if ((rv = tls_check_name(ctx, cert,
+		    ctx->servername)) != 0) {
+			if (rv != -2)
+				tls_set_errorx(ctx, "name `%s' not present in"
+				    " server certificate", ctx->servername);
+			goto err;
+		}
+	}
 
-err:
-	return (-1);
+	ctx->state |= TLS_HANDSHAKE_COMPLETE;
+	rv = 0;
+
+ err:
+	X509_free(cert);
+
+	return (rv);
 }
 
 #endif /* USUAL_LIBSSL_FOR_TLS */

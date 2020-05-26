@@ -1,4 +1,4 @@
-/* $OpenBSD: tls_verify.c,v 1.7 2015/02/11 06:46:33 jsing Exp $ */
+/* $OpenBSD$ */
 /*
  * Copyright (c) 2014 Jeremie Courreges-Anglas <jca@openbsd.org>
  *
@@ -19,10 +19,14 @@
 
 #ifdef USUAL_LIBSSL_FOR_TLS
 
+#include <openssl/bn.h>
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
 
 #include "tls_internal.h"
+
+#define TLS_CERT_INTERNAL_FUNCS
+#include "tls_cert.h"
 
 /*
  * Load cert data from X509 cert.
@@ -71,71 +75,6 @@ tls_parse_bigint(struct tls *ctx, const ASN1_INTEGER *asn1int, const char **dst_
 	return -1;
 }
 
-/* Convert ASN1_TIME to ISO 8601 string */
-static int
-tls_parse_time(struct tls *ctx, const ASN1_TIME *asn1time, const char **dst_p)
-{
-	static const char months[12][4] = {
-		"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-	};
-	char buf[128], *tmp, *mon, *day, *time, *year, *tz;
-	char buf2[128];
-	BIO *bio;
-	int ret, i;
-
-	*dst_p = NULL;
-
-	memset(buf, 0, sizeof buf);
-	bio = BIO_new(BIO_s_mem());
-	if (!bio)
-		goto nomem;
-
-	/* result: Aug 18 20:51:52 2015 GMT */
-	ret = ASN1_TIME_print(bio, asn1time);
-	if (!ret) {
-		BIO_free(bio);
-		goto invalid;
-	}
-	BIO_read(bio, buf, sizeof(buf) - 1);
-	BIO_free(bio);
-	memcpy(buf2, buf, 128);
-
-	/* "Jan  1" */
-	if (buf[3] == ' ' && buf[4] == ' ')
-		buf[4] = '0';
-
-	tmp = buf;
-	mon = strsep(&tmp, " ");
-	day = strsep(&tmp, " ");
-	time = strsep(&tmp, " ");
-	year = strsep(&tmp, " ");
-	tz = strsep(&tmp, " ");
-
-	if (!year || tmp)
-		goto invalid;
-	if (tz && strcmp(tz, "GMT") != 0)
-		goto invalid;
-
-	for (i = 0; i < 12; i++) {
-		if (memcmp(months[i], mon, 4) == 0)
-			break;
-	}
-	if (i > 11)
-		goto invalid;
-
-	ret = asprintf(&tmp, "%s-%02d-%sT%sZ", year, i+1, day, time);
-	if (ret < 0)
-		goto nomem;
-	*dst_p = tmp;
-	return 0;
-invalid:
-	tls_set_errorx(ctx, "invalid time format");
-	return -1;
-nomem:
-	tls_set_error(ctx, "no mem");
-	return -1;
-}
-
 /*
  * Decode all string types used in RFC5280.
  *
@@ -147,7 +86,7 @@ nomem:
  */
 
 static int
-check_invalid_bytes(struct tls *ctx, unsigned char *data, unsigned int len,
+check_invalid_bytes(struct tls *ctx, const unsigned char *data, unsigned int len,
 		    int ascii_only, const char *desc)
 {
 	unsigned int i, c;
@@ -178,7 +117,7 @@ check_invalid_bytes(struct tls *ctx, unsigned char *data, unsigned int len,
 		}
 	}
 	return 0;
-failed:
+ failed:
 	return -1;
 }
 
@@ -186,7 +125,7 @@ static int
 tls_parse_asn1string(struct tls *ctx, ASN1_STRING *a1str, const char **dst_p, int minchars, int maxchars, const char *desc)
 {
 	int format, len, ret = -1;
-	unsigned char *data;
+	const unsigned char *data;
 	ASN1_STRING *a1utf = NULL;
 	int ascii_only = 0;
 	char *cstr = NULL;
@@ -195,7 +134,7 @@ tls_parse_asn1string(struct tls *ctx, ASN1_STRING *a1str, const char **dst_p, in
 	*dst_p = NULL;
 
 	format = ASN1_STRING_type(a1str);
-	data = ASN1_STRING_data(a1str);
+	data = ASN1_STRING_get0_data(a1str);
 	len = ASN1_STRING_length(a1str);
 	if (len < minchars) {
 		tls_set_errorx(ctx, "invalid %s: string too short", desc);
@@ -249,7 +188,7 @@ tls_parse_asn1string(struct tls *ctx, ASN1_STRING *a1str, const char **dst_p, in
 			tls_set_errorx(ctx, "multibyte conversion failed: expected UTF8 result");
 			goto failed;
 		}
-		data = ASN1_STRING_data(a1utf);
+		data = ASN1_STRING_get0_data(a1utf);
 		len = ASN1_STRING_length(a1utf);
 	}
 
@@ -273,7 +212,7 @@ tls_parse_asn1string(struct tls *ctx, ASN1_STRING *a1str, const char **dst_p, in
 	cstr[len] = 0;
 	*dst_p = cstr;
 	ret = len;
-failed:
+ failed:
 	ASN1_STRING_free(a1utf);
 	return ret;
 }
@@ -336,12 +275,12 @@ static int
 tls_load_alt_ipaddr(struct tls *ctx, ASN1_OCTET_STRING *bin, struct tls_cert *cert)
 {
 	struct tls_cert_general_name *slot;
-	void *data;
+	const void *data;
 	int len;
 
 	slot = &cert->subject_alt_names[cert->subject_alt_name_count];
 	len = ASN1_STRING_length(bin);
-	data = ASN1_STRING_data(bin);
+	data = ASN1_STRING_get0_data(bin);
 	if (len < 0) {
 		tls_set_errorx(ctx, "negative length for ipaddress");
 		return -1;
@@ -415,7 +354,7 @@ tls_cert_get_altnames(struct tls *ctx, struct tls_cert *cert, X509 *x509_cert)
 			goto out;
 	}
 	rv = 0;
-out:
+ out:
 	sk_GENERAL_NAME_pop_free(altname_stack, GENERAL_NAME_free);
 	return rv;
 }
@@ -444,6 +383,129 @@ tls_get_dname(struct tls *ctx, X509_NAME *name, struct tls_cert_dname *dname)
 	if (ret == 0)
 		ret = tls_cert_get_dname_string(ctx, name, NID_organizationalUnitName, &dname->organizational_unit_name,
 						0, UB_ORGANIZATIONAL_UNIT_NAME, "organizationalUnitName");
+	return ret;
+}
+
+static int
+tls_get_basic_constraints(struct tls *ctx, struct tls_cert *cert, X509 *x509)
+{
+	BASIC_CONSTRAINTS *bc;
+	int crit;
+	int ret = -1;
+
+	bc = X509_get_ext_d2i(x509, NID_basic_constraints, &crit, NULL);
+	if (!bc)
+		return 0;
+
+	cert->ext_set |= TLS_EXT_BASIC;
+	if (crit)
+		cert->ext_crit |= TLS_EXT_BASIC;
+
+	cert->basic_constraints_ca = bc->ca ? 1 : 0;
+	if (bc->pathlen) {
+		cert->basic_constraints_pathlen = ASN1_INTEGER_get(bc->pathlen);
+		if (cert->basic_constraints_pathlen < 0) {
+			tls_set_error(ctx, "BasicConstraints has invalid pathlen");
+			goto failed;
+		}
+	} else {
+		cert->basic_constraints_pathlen = -1;
+	}
+	ret = 0;
+failed:
+	BASIC_CONSTRAINTS_free(bc);
+	return ret;
+}
+
+static uint32_t map_bits(const uint32_t map[][2], uint32_t input)
+{
+	uint32_t i, out = 0;
+	for (i = 0; map[i][0]; i++) {
+		if (map[i][0] & input)
+			out |= map[i][1];
+	}
+	return out;
+}
+
+static int
+tls_get_key_usage(struct tls *ctx, struct tls_cert *cert, X509 *x509)
+{
+	static const uint32_t ku_map[][2] = {
+		{KU_DIGITAL_SIGNATURE, KU_DIGITAL_SIGNATURE},
+		{KU_NON_REPUDIATION, KU_NON_REPUDIATION},
+		{KU_KEY_ENCIPHERMENT, KU_KEY_ENCIPHERMENT},
+		{KU_DATA_ENCIPHERMENT, KU_DATA_ENCIPHERMENT},
+		{KU_KEY_AGREEMENT, KU_KEY_AGREEMENT},
+		{KU_KEY_CERT_SIGN, KU_KEY_CERT_SIGN},
+		{KU_CRL_SIGN, KU_CRL_SIGN},
+		{KU_ENCIPHER_ONLY, KU_ENCIPHER_ONLY},
+		{KU_DECIPHER_ONLY, KU_DECIPHER_ONLY},
+		{0, 0},
+	};
+	ASN1_BIT_STRING *ku;
+	int crit;
+
+	ku = X509_get_ext_d2i(x509, NID_key_usage, &crit, NULL);
+	if (!ku)
+		return 0;
+
+	cert->ext_set |= TLS_EXT_KEY_USAGE;
+	if (crit)
+		cert->ext_crit |= TLS_EXT_KEY_USAGE;
+	ASN1_BIT_STRING_free(ku);
+
+	cert->key_usage_flags = map_bits(ku_map, X509_get_key_usage(x509));
+	return 0;
+}
+
+static int
+tls_get_ext_key_usage(struct tls *ctx, struct tls_cert *cert, X509 *x509)
+{
+	static const uint32_t xku_map[][2] = {
+		{XKU_SSL_SERVER, TLS_XKU_SSL_SERVER},
+		{XKU_SSL_CLIENT, TLS_XKU_SSL_CLIENT},
+		{XKU_SMIME, TLS_XKU_SMIME},
+		{XKU_CODE_SIGN, TLS_XKU_CODE_SIGN},
+		{XKU_SGC, TLS_XKU_SGC},
+		{XKU_OCSP_SIGN, TLS_XKU_OCSP_SIGN},
+		{XKU_TIMESTAMP, TLS_XKU_TIMESTAMP},
+		{XKU_DVCS, TLS_XKU_DVCS},
+		{0, 0},
+	};
+	EXTENDED_KEY_USAGE *xku;
+	int crit;
+
+	xku = X509_get_ext_d2i(x509, NID_ext_key_usage, &crit, NULL);
+	if (!xku)
+		return 0;
+	sk_ASN1_OBJECT_pop_free(xku, ASN1_OBJECT_free);
+
+	cert->ext_set |= TLS_EXT_EXTENDED_KEY_USAGE;
+	if (crit)
+		cert->ext_crit |= TLS_EXT_EXTENDED_KEY_USAGE;
+
+	cert->extended_key_usage_flags = map_bits(xku_map, X509_get_extended_key_usage(x509));
+	return 0;
+}
+
+static int
+tls_load_extensions(struct tls *ctx, struct tls_cert *cert, X509 *x509)
+{
+	int ret;
+
+	/*
+	 * Force libssl to fill extension fields under X509 struct.
+	 * Then libtls does not need to parse raw data.
+	 */
+	X509_check_ca(x509);
+
+	ret = tls_get_basic_constraints(ctx, cert, x509);
+	if (ret == 0)
+		ret = tls_get_key_usage(ctx, cert, x509);
+	if (ret == 0)
+		ret = tls_get_ext_key_usage(ctx, cert, x509);
+	if (ret == 0)
+		ret = tls_cert_get_altnames(ctx, cert, x509);
 	return ret;
 }
 
@@ -543,18 +605,18 @@ tls_parse_cert(struct tls *ctx, struct tls_cert **cert_p, const char *fingerprin
 	if (ret == 0)
 		ret = tls_get_dname(ctx, issuer, &cert->issuer);
 	if (ret == 0)
-		ret = tls_cert_get_altnames(ctx, cert, x509);
+		ret = tls_asn1_parse_time(ctx, X509_get_notBefore(x509), &cert->not_before);
 	if (ret == 0)
-		ret = tls_parse_time(ctx, X509_get_notBefore(x509), &cert->not_before);
-	if (ret == 0)
-		ret = tls_parse_time(ctx, X509_get_notAfter(x509), &cert->not_after);
+		ret = tls_asn1_parse_time(ctx, X509_get_notAfter(x509), &cert->not_after);
 	if (ret == 0)
 		ret = tls_parse_bigint(ctx, X509_get_serialNumber(x509), &cert->serial);
+	if (ret == 0)
+		ret = tls_load_extensions(ctx, cert, x509);
 	if (ret == 0) {
 		*cert_p = cert;
 		return 0;
 	}
-failed:
+ failed:
 	tls_cert_free(cert);
 	return ret;
 }
@@ -562,26 +624,21 @@ failed:
 int
 tls_get_peer_cert(struct tls *ctx, struct tls_cert **cert_p, const char *fingerprint_algo)
 {
-	SSL *conn = ctx->ssl_conn;
-	X509 *peer;
+	X509 *peer = ctx->ssl_peer_cert;
 	int res;
 
 	*cert_p = NULL;
 
-	if (!conn) {
-		tls_set_errorx(ctx, "not connected");
-		return -1;
-	}
-
-	peer = SSL_get_peer_certificate(conn);
 	if (!peer) {
 		tls_set_errorx(ctx, "peer does not have cert");
 		return TLS_NO_CERT;
 	}
 
+	ERR_clear_error();
 	res = tls_parse_cert(ctx, cert_p, fingerprint_algo, peer);
 	if (res == 0)
 		check_verify_error(ctx, *cert_p);
+	ERR_clear_error();
 	return res;
 }
 
@@ -614,11 +671,8 @@ tls_cert_free(struct tls_cert *cert)
 	free(cert->subject_alt_names);
 
 	free((void*)cert->serial);
-	free((void*)cert->not_before);
-	free((void*)cert->not_after);
 	free((void*)cert->fingerprint);
 	free(cert);
 }
 
 #endif /* USUAL_LIBSSL_FOR_TLS */
-

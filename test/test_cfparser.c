@@ -7,15 +7,15 @@
 #include "test_common.h"
 
 struct Config1 {
-	const char *str1;
-	const char *def1;
+	char *str1;
+	char *def1;
 	int int1;
 	int bool1;
 };
 
 struct Config2 {
-	const char *str2;
-	const char *def2;
+	char *str2;
+	char *def2;
 	double time_double;
 	usec_t time_usec;
 };
@@ -60,8 +60,9 @@ static struct CfContext cfdesc1 = { sects, NULL };
 static void test_abs(void *ptr)
 {
 	char buf[128];
+	enum LogLevel save_level;
 
-	int_check(1, cf_load_file(&cfdesc1, "test_cfparser.ini"));
+	int_check(1, cf_load_file(&cfdesc1, tdata("test_cfparser.ini")));
 
 	str_check(cf1.str1, "val1");
 	tt_assert(cf1.def1 == NULL);
@@ -74,6 +75,11 @@ static void test_abs(void *ptr)
 	str_check("val1", cf_get(&cfdesc1, "one", "str1", buf, sizeof(buf)));
 	int_check(1, cf_set(&cfdesc1, "one", "str1", "val2"));
 	str_check("val2", cf_get(&cfdesc1, "one", "str1", buf, sizeof(buf)));
+
+	save_level = cf_stderr_level;
+	cf_stderr_level = LG_FATAL;
+	int_check(0, cf_set(&cfdesc1, "one", "nonexistent", "foo"));
+	cf_stderr_level = save_level;
 end:
 	cleanup();
 }
@@ -118,12 +124,9 @@ static struct CfContext cfdesc2 = { rsects, &cf1 };
 static void test_rel(void *ptr)
 {
 	char buf[128];
-	const char *fn = "test_cfparser.ini";
+	const char *fn = tdata("test_cfparser.ini");
 
 	cleanup();
-
-	if (file_size(fn) < 0)
-		fn = "test/test_cfparser.ini";
 
 	int_check(1, cf_load_file(&cfdesc2, fn));
 
@@ -150,4 +153,3 @@ struct testcase_t cfparser_tests[] = {
 	{ "rel", test_rel },
 	END_OF_TESTCASES
 };
-

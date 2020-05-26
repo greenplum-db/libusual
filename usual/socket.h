@@ -12,7 +12,7 @@
  * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */ 
+ */
 
 /** @file
  *
@@ -22,7 +22,6 @@
  * - win32: <winsock2.h>
  * - win32: <ws2tcpip.h>
  * - <sys/socket.h>
- * - <sys/poll.h>
  * - <sys/un.h>
  * - <netinet/in.h>
  * - <netinet/tcp.h>
@@ -49,9 +48,6 @@
 #endif
 #ifdef HAVE_POLL_H
 #include <poll.h>
-#endif
-#ifdef HAVE_SYS_POLL_H
-#include <sys/poll.h>
 #endif
 #ifdef HAVE_SYS_UIO_H
 #include <sys/uio.h>
@@ -153,4 +149,3 @@ int socketpair(int d, int typ, int proto, int sv[2]);
 #endif
 
 #endif
-

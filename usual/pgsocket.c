@@ -18,10 +18,11 @@
 
 #include <usual/pgsocket.h>
 
-#include <usual/event.h>
 #include <usual/logging.h>
 #include <usual/time.h>
 #include <usual/string.h>
+
+#include <event.h>
 
 #define MAX_QRY_ARGS 32
 
@@ -82,14 +83,14 @@ static void wait_event(struct PgSocket *db, short ev, libev_cb fn)
 	if (db->base)
 		event_base_set(db->base, &db->ev);
 	if (event_add(&db->ev, NULL) < 0)
-		fatal_perror("event_add");
+		die("event_add failed: %s", strerror(errno));
 
 	db->wait_type = W_SOCK;
 	db->wait_event = ev;
 }
 
 /* wait timeout from libevent */
-static void timeout_cb(int sock, short flags, void *arg)
+static void timeout_cb(evutil_socket_t sock, short flags, void *arg)
 {
 	struct PgSocket *db = arg;
 
@@ -139,7 +140,7 @@ static void report_last_result(struct PgSocket *db)
  * Because the callback may want to close the connection when processing
  * last resultset, the PGresult handover is delayed one step.
  */
-static void result_cb(int sock, short flags, void *arg)
+static void result_cb(evutil_socket_t sock, short flags, void *arg)
 {
 	struct PgSocket *db = arg;
 	PGresult *res;
@@ -173,7 +174,7 @@ static void result_cb(int sock, short flags, void *arg)
 
 static void flush(struct PgSocket *db);
 
-static void send_cb(int sock, short flags, void *arg)
+static void send_cb(evutil_socket_t sock, short flags, void *arg)
 {
 	struct PgSocket *db = arg;
 
@@ -183,7 +184,7 @@ static void send_cb(int sock, short flags, void *arg)
 }
 
 /* handle connect states */
-static void connect_cb(int sock, short flags, void *arg)
+static void connect_cb(evutil_socket_t sock, short flags, void *arg)
 {
 	struct PgSocket *db = arg;
 	PostgresPollingStatusType poll_res;
@@ -327,7 +328,7 @@ void pgs_sleep(struct PgSocket *db, double timeout)
 	if (db->base)
 		event_base_set(db->base, &db->ev);
 	if (evtimer_add(&db->ev, &tv) < 0)
-		fatal_perror("event_add");
+		die("evtimer_add failed: %s", strerror(errno));
 
 	db->wait_type = W_TIME;
 }
@@ -405,4 +406,3 @@ bool pgs_waiting_for_reply(struct PgSocket *db)
 		return false;
 	return (db->wait_type == W_SOCK) && (db->wait_event == EV_READ);
 }
-

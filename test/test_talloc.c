@@ -71,14 +71,14 @@ static void *log_realloc(void *ctx, void *ptr, size_t len)
 	return chdr + 1;
 }
 
-static void log_free(void *ctx, const void *ptr)
+static void log_free(void *ctx, void *ptr)
 {
-	struct CheckHeader *chdr = (void*)ptr;
+	struct CheckHeader *chdr = ptr;
 	chdr--;
 	m_log('F', chdr);
 	delta -= chdr->size;
 	list_del(&chdr->trace_node);
-	memset((void*)ptr, 0x95, chdr->size);
+	memset(ptr, 0x95, chdr->size);
 	chdr->size = chdr->magic = 0;
 	cx_free(ctx, chdr);
 }
@@ -457,4 +457,3 @@ struct testcase_t talloc_tests[] = {
 	{ "reparent", test_talloc_reparent },
 	END_OF_TESTCASES
 };
-

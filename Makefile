@@ -1,4 +1,3 @@
-
 AM_CPPFLAGS = -I$(builddir) -I$(srcdir) $(TLS_CPPFLAGS)
 AM_LDFLAGS = $(TLS_LDFLAGS)
 AM_LIBS = $(TLS_LIBS)
@@ -42,7 +41,6 @@ libusual_la_SOURCES = usual/config.h.in \
 	usual/daemon.h usual/daemon.c \
 	usual/endian.h \
 	usual/err.h usual/err.c \
-	usual/event.h usual/event.c \
 	usual/fileutil.h usual/fileutil.c \
 	usual/fnmatch.h usual/fnmatch.c \
 	usual/getopt.h usual/getopt.c \
@@ -77,9 +75,10 @@ libusual_la_SOURCES = usual/config.h.in \
 	usual/talloc.h usual/talloc.c \
 	usual/time.h usual/time.c \
 	usual/tls/tls.h usual/tls/tls.c usual/tls/tls_internal.h \
-	usual/tls/tls_compat.h usual/tls/tls_compat.c \
-	usual/tls/tls_client.c usual/tls/tls_config.c usual/tls/tls_cert.c \
+	usual/tls/tls_compat.h usual/tls/tls_compat.c usual/tls/tls_peer.c \
+	usual/tls/tls_client.c usual/tls/tls_config.c usual/tls/tls_ocsp.c \
 	usual/tls/tls_server.c usual/tls/tls_util.c usual/tls/tls_verify.c \
+	usual/tls/tls_cert.h usual/tls/tls_cert.c usual/tls/tls_conninfo.c \
 	usual/utf8.h usual/utf8.c \
 	usual/wchar.h usual/wchar.c
 
@@ -181,7 +180,7 @@ sizes: all
 
 .PHONY: tags
 tags:
-	ctags $(libusual_a_SOURCES)
+	ctags $(libusual_la_SOURCES)
 
 .PHONY: nodoc
 nodoc:
@@ -189,6 +188,5 @@ nodoc:
 	  grep -q "$$hdr" doc/mainpage.dox || echo "$$hdr" ; \
 	done
 
-deb:
-	debuild -us -uc -b
-
+check: all
+	$(MAKE) -C test check

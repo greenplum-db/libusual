@@ -8,6 +8,7 @@ test/obj
 test/test_config.h
 test/regtest_*
 test/compile
+test/connect
 doc/html
 *.[oas]
 *.gc[odn][aov]
@@ -34,7 +35,3 @@ tags
 
 mk/temos/html
 mk/temos/output
-debian/libusual-dev/
-debian/libusual0/
-debian/files
-

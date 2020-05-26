@@ -25,7 +25,7 @@ AC_USUAL_DEBUG
 
 AC_USUAL_UREGEX
 
-AC_USUAL_LIBEVENT(opt)
+PKG_CHECK_MODULES(LIBEVENT, libevent)
 
 AC_USUAL_GETADDRINFO_A
 
@@ -40,4 +40,3 @@ AC_USUAL_TLS
 
 dnl Output findings
 AC_OUTPUT([config.mak mk/libusual.pc build.mk])
-

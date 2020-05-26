@@ -122,7 +122,7 @@ static inline unsigned mbuf_consumed(const struct MBuf *buf)
 }
 
 /** Return pointer to data area. */
-static inline const void *mbuf_data(const struct MBuf *buf)
+static inline void *mbuf_data(const struct MBuf *buf)
 {
 	return buf->data;
 }
@@ -336,4 +336,3 @@ static inline bool mbuf_slice(struct MBuf *src, unsigned len, struct MBuf *dst)
 }
 
 #endif
-

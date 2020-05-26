@@ -1,10 +1,10 @@
 /*
  * Copyright (c) 2007-2009  Marko Kreen, Skype Technologies OÜ
- * 
+ *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
  * copyright notice and this permission notice appear in all copies.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
  * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
  * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
@@ -44,15 +44,21 @@ bool strlist_empty(struct StrList *slist);
 /** Append copy of string. */
 bool strlist_append(struct StrList *slist, const char *str);
 /** Append reference, strlist now owns it. */
-bool strlist_append_ref(struct StrList *slist, const char *str);
+bool strlist_append_ref(struct StrList *slist, char *str);
 /** Call function on each element */
 bool strlist_foreach(const struct StrList *slist, str_cb cb_func, void *cb_arg);
 /** Remove and return first element */
-const char *strlist_pop(struct StrList *slist);
+char *strlist_pop(struct StrList *slist);
 /* @} */
 
 /** Parse comma-separated elements from string and launch callback for each of them. */
 bool parse_word_list(const char *s, str_cb cb_func, void *cb_arg);
+
+#ifndef HAVE_STRNLEN
+#define strnlen(a,b) usual_strnlen(a,b)
+/** Compat: determine the length of a fixed-size string */
+size_t strnlen(const char *string, size_t maxlen);
+#endif
 
 #ifndef HAVE_STRLCPY
 #define strlcpy(a,b,c) usual_strlcpy(a,b,c)
@@ -66,6 +72,31 @@ size_t strlcpy(char *dst, const char *src, size_t n);
 size_t strlcat(char *dst, const char *src, size_t n);
 #endif
 
+#undef strpcpy
+#define strpcpy(a,b,c) usual_strpcpy(a,b,c)
+
+/**
+ * Safe string copy.
+ *
+ * Returns pointer to end of string in dst or NULL
+ * if truncation occured.  Destination will be
+ * zero-terminated unless dstlen is 0.
+ */
+char *strpcpy(char *dst, const char *src, size_t dstlen);
+
+#undef strpcat
+#define strpcat(a,b,c) usual_strpcat(a,b,c)
+
+/**
+ * Safe string concat.
+ *
+ * Returns pointer to end of string in dst or NULL if truncation occured.
+ * Destination will be zero-terminated, unless dstlen is 0 or existing
+ * contents were not zero-terminated.
+ */
+char *strpcat(char *dst, const char *src, size_t dstlen);
+
+
 #ifndef HAVE_MEMRCHR
 #define memrchr(a,b,c) usual_memrchr(a,b,c)
 /** Compat: find byte in reverse direction */
@@ -76,6 +107,12 @@ void *memrchr(const void *s, int c, size_t n);
 #define memmem(a,b,c,d) usual_memmem(a,b,c,d)
 /** Compat: find memory area */
 void *memmem(const void *s, size_t slen, const void *q, size_t qlen);
+#endif
+
+#ifndef HAVE_MEMPCPY
+#define mempcpy(a,b,c) usual_mempcpy(a,b,c)
+/** Copy memory, return pointer to end. */
+void *mempcpy(void *dst, const void *src, size_t len);
 #endif
 
 /** Return position to first byte that is in 'find'. */
@@ -169,4 +206,3 @@ int vasprintf(char **dst_p, const char *fmt, va_list ap) _PRINTF(2, 0);
 #endif
 
 #endif
-

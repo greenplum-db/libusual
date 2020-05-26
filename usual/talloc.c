@@ -21,6 +21,9 @@
 #include <usual/cxextra.h>
 #include <usual/list.h>
 #include <usual/bits.h>
+#ifndef HAVE_STRNLEN
+#include <usual/string.h>	/* needed for compat strnlen prototype  */
+#endif
 
 #include <string.h>
 
@@ -1592,7 +1595,7 @@ static void *cxt_alloc(void *ctx, size_t size)
 	return talloc_size(ctx, size);
 }
 
-static void cxt_free(void *ctx, const void *ptr)
+static void cxt_free(void *ctx, void *ptr)
 {
 	if (talloc_unlink(ctx, ptr) != 0)
 		do_log("cxt_free: talloc_unlink failed\n");
@@ -1629,4 +1632,3 @@ CxMem *talloc_as_cx(const void *parent, const char *name)
 	cx->ctx = cx;
 	return cx;
 }
-

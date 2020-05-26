@@ -1,5 +1,3 @@
-
-
 #include "test_common.h"
 
 #include <locale.h>
@@ -19,7 +17,6 @@ struct testgroup_t groups[] = {
 	{ "ctype/", ctype_tests },
 	{ "cxalloc/", cxalloc_tests },
 	{ "endian/", endian_tests },
-	{ "event/", event_tests },
 	{ "fileutil/", fileutil_tests },
 	{ "fnmatch/", fnmatch_tests },
 	{ "getopt/", getopt_tests },
@@ -45,6 +42,14 @@ struct testgroup_t groups[] = {
 	END_OF_GROUPS
 };
 
+const char *tdata(const char *fn)
+{
+	static char buf[256];
+	const char *dir = getenv("LIBUSUAL_TEST_DATA_DIR");
+	snprintf(buf, sizeof buf, "%s/%s", dir ? dir : ".", fn);
+	return buf;
+}
+
 int main(int argc, const char *argv[])
 {
 	if (getenv("USE_LOCALE"))
@@ -53,8 +58,7 @@ int main(int argc, const char *argv[])
 	test_seed1 = pseudo_random();
 	test_seed2 = pseudo_random();
 	pseudo_random_seed(test_seed1, test_seed2);
-	printf("inital seed: %llu %llu\n", test_seed1, test_seed2);
+	printf("inital seed: %" PRIu64 " %" PRIu64 "\n", (uint64_t)test_seed1, (uint64_t)test_seed2);
 
 	return tinytest_main(argc, argv, groups);
 }
-

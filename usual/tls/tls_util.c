@@ -1,4 +1,4 @@
-/* $OpenBSD: tls_util.c,v 1.1 2014/10/31 13:46:17 jsing Exp $ */
+/* $OpenBSD$ */
 /*
  * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -20,9 +20,18 @@
 
 #ifdef USUAL_LIBSSL_FOR_TLS
 
+#include <openssl/dh.h>
+#include <openssl/evp.h>
+
 #include <sys/stat.h>
 
 #include "tls_internal.h"
+
+const char *
+tls_backend_version(void)
+{
+	return OpenSSL_version(OPENSSL_VERSION);
+}
 
 /*
  * Extract the host and port from a colon separated value. For a literal IPv6
@@ -72,14 +81,14 @@ tls_host_port(const char *hostport, char **host, char **port)
 	rv = 0;
 	goto done;
 
-fail:
+ fail:
 	free(*host);
 	*host = NULL;
 	free(*port);
 	*port = NULL;
 	rv = -1;
 
-done:
+ done:
 	free(s);
 
 	return (rv);
@@ -172,22 +181,61 @@ ssize_t
 tls_get_connection_info(struct tls *ctx, char *buf, size_t buflen)
 {
 	SSL *conn = ctx->ssl_conn;
-	if (conn == NULL)
-		return -1;
+	const char *ocsp_pfx = "", *ocsp_info = "";
+	const char *proto = "-", *cipher = "-";
+	char dh[64];
+	int used_dh_bits = ctx->used_dh_bits, used_ecdh_nid = ctx->used_ecdh_nid;
+	const SSL_CIPHER *ciph_obj = NULL;
 
-	if (ctx->used_dh_bits)
-		return snprintf(buf, buflen, "%s/%s/DH=%d",
-				SSL_get_version(conn), SSL_get_cipher(conn),
-				ctx->used_dh_bits);
+	dh[0] = 0;
 
-	if (ctx->used_ecdh_nid)
-		return snprintf(buf, buflen, "%s/%s/ECDH=%s",
-				SSL_get_version(conn), SSL_get_cipher(conn),
-				OBJ_nid2sn(ctx->used_ecdh_nid));
+	if (conn != NULL) {
+		proto = SSL_get_version(conn);
+		cipher = SSL_get_cipher(conn);
+		ciph_obj = SSL_get_current_cipher(conn);
 
-	return snprintf(buf, buflen, "%s/%s",
-			SSL_get_version(conn), SSL_get_cipher(conn));
+#ifdef SSL_get_server_tmp_key
+		if (ctx->flags & TLS_CLIENT) {
+			EVP_PKEY *pk = NULL;
+			int ok = SSL_get_server_tmp_key(conn, &pk);
+			if (ok) {
+				int pk_type = EVP_PKEY_id(pk);
+				if (pk_type == EVP_PKEY_DH) {
+					DH *dh = EVP_PKEY_get0(pk);
+					used_dh_bits = DH_size(dh) * 8;
+				} else if (pk_type == EVP_PKEY_EC) {
+					EC_KEY *ecdh = EVP_PKEY_get0(pk);
+					const EC_GROUP *eg = EC_KEY_get0_group(ecdh);
+					used_ecdh_nid = EC_GROUP_get_curve_name(eg);
+				}
+				EVP_PKEY_free(pk);
+			}
+		} else
+#endif
+		if (ciph_obj && !used_ecdh_nid && !used_dh_bits) {
+#ifdef SSL_get_shared_curve
+			int kx = SSL_CIPHER_get_kx_nid(ciph_obj);
+			if (kx == NID_kx_ecdhe) {
+				used_ecdh_nid = SSL_get_shared_curve(conn, 0);
+			} else if (kx == NID_kx_dhe) {
+				snprintf(dh, sizeof dh, "/DH=?");
+			}
+#endif
+		}
+	}
+
+	if (used_dh_bits) {
+		snprintf(dh, sizeof dh, "/DH=%d", used_dh_bits);
+	} else if (used_ecdh_nid) {
+		snprintf(dh, sizeof dh, "/ECDH=%s", OBJ_nid2sn(used_ecdh_nid));
+	}
+
+	if (ctx->ocsp_result) {
+		ocsp_info = ctx->ocsp_result;
+		ocsp_pfx = "/OCSP=";
+	}
+
+	return snprintf(buf, buflen, "%s/%s%s%s%s", proto, cipher, dh, ocsp_pfx, ocsp_info);
 }
 
 #endif /* USUAL_LIBSSL_FOR_TLS */
-

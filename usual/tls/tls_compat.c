@@ -21,9 +21,22 @@
 #ifdef USUAL_LIBSSL_FOR_TLS
 
 #include <openssl/err.h>
+#include <openssl/dh.h>
 
+#include <usual/tls/tls_internal.h>
+
+#ifndef SSL_F_SSL_CTX_USE_CERTIFICATE_CHAIN_FILE
+#undef SSLerr
+#undef X509err
+#endif
+
+#ifndef SSLerr
+#define SSLerr(a,b) do {} while (0)
+#define X509err(a,b) do {} while (0)
+#endif
 
 #ifndef SSL_CTX_set_dh_auto
+#define DH_CLEANUP
 
 /*
  * SKIP primes, used by OpenSSL and PostgreSQL.
@@ -66,7 +79,7 @@ static const char file_dh4096[] =
 
 static DH *dh1024, *dh2048, *dh4096;
 
-static DH *load_dh_buffer(DH **dhp, const char *buf)
+static DH *load_dh_buffer(struct tls *ctx, DH **dhp, const char *buf)
 {
 	BIO *bio;
 	DH *dh = *dhp;
@@ -78,6 +91,8 @@ static DH *load_dh_buffer(DH **dhp, const char *buf)
 		}
 		*dhp = dh;
 	}
+	if (ctx)
+		ctx->used_dh_bits = DH_size(dh) * 8;
 	return dh;
 }
 
@@ -85,22 +100,24 @@ static DH *dh_auto_cb(SSL *s, int is_export, int keylength)
 {
 	EVP_PKEY *pk;
 	int bits;
+	struct tls *ctx = SSL_get_app_data(s);
 
 	pk = SSL_get_privatekey(s);
 	if (!pk)
-		return load_dh_buffer(&dh2048, file_dh2048);
+		return load_dh_buffer(ctx, &dh2048, file_dh2048);
 
 	bits = EVP_PKEY_bits(pk);
 	if (bits >= 3072)
-		return load_dh_buffer(&dh4096, file_dh4096);
+		return load_dh_buffer(ctx, &dh4096, file_dh4096);
 	if (bits >= 1536)
-		return load_dh_buffer(&dh2048, file_dh2048);
-	return load_dh_buffer(&dh1024, file_dh1024);
+		return load_dh_buffer(ctx, &dh2048, file_dh2048);
+	return load_dh_buffer(ctx, &dh1024, file_dh1024);
 }
 
 static DH *dh_legacy_cb(SSL *s, int is_export, int keylength)
 {
-	return load_dh_buffer(&dh1024, file_dh1024);
+	struct tls *ctx = SSL_get_app_data(s);
+	return load_dh_buffer(ctx, &dh1024, file_dh1024);
 }
 
 long SSL_CTX_set_dh_auto(SSL_CTX *ctx, int onoff)
@@ -119,22 +136,26 @@ long SSL_CTX_set_dh_auto(SSL_CTX *ctx, int onoff)
 #endif
 
 #ifndef SSL_CTX_set_ecdh_auto
+#define ECDH_CLEANUP
 
 /*
  * Use same curve as EC key, fallback to NIST P-256.
  */
 
+static EC_KEY *ecdh_cache;
+
+#ifdef USE_LIBSSL_OLD
 static EC_KEY *ecdh_auto_cb(SSL *ssl, int is_export, int keylength)
 {
-	static EC_KEY *ecdh;
 	int last_nid;
 	int nid = 0;
 	EVP_PKEY *pk;
 	EC_KEY *ec;
+	struct tls *ctx = SSL_get_app_data(ssl);
 
 	/* pick curve from EC key */
 	pk = SSL_get_privatekey(ssl);
-	if (pk && pk->type == EVP_PKEY_EC) {
+	if (pk && EVP_PKEY_id(pk) == EVP_PKEY_EC) {
 		ec = EVP_PKEY_get1_EC_KEY(pk);
 		if (ec) {
 			nid = EC_GROUP_get_curve_name(EC_KEY_get0_group(ec));
@@ -146,28 +167,49 @@ static EC_KEY *ecdh_auto_cb(SSL *ssl, int is_export, int keylength)
 	if (nid == 0)
 		nid = NID_X9_62_prime256v1;
 
-	if (ecdh) {
-		last_nid = EC_GROUP_get_curve_name(EC_KEY_get0_group(ecdh));
+	if (ctx)
+		ctx->used_ecdh_nid = nid;
+
+	if (ecdh_cache) {
+		last_nid = EC_GROUP_get_curve_name(EC_KEY_get0_group(ecdh_cache));
 		if (last_nid == nid)
-			return ecdh;
-		EC_KEY_free(ecdh);
-		ecdh = NULL;
+			return ecdh_cache;
+		EC_KEY_free(ecdh_cache);
+		ecdh_cache = NULL;
 	}
 
-	ecdh = EC_KEY_new_by_curve_name(nid);
-	return ecdh;
+	ecdh_cache = EC_KEY_new_by_curve_name(nid);
+	return ecdh_cache;
 }
+#endif
 
 long SSL_CTX_set_ecdh_auto(SSL_CTX *ctx, int onoff)
 {
 	if (onoff) {
 		SSL_CTX_set_options(ctx, SSL_OP_SINGLE_ECDH_USE);
+#ifdef USE_LIBSSL_OLD
 		SSL_CTX_set_tmp_ecdh_callback(ctx, ecdh_auto_cb);
+#endif
 	}
 	return 1;
 }
 
 #endif
+
+void tls_compat_cleanup(void)
+{
+#ifdef DH_CLEANUP
+	if (dh1024) { DH_free(dh1024); dh1024 = NULL; }
+	if (dh2048) { DH_free(dh2048); dh2048 = NULL; }
+	if (dh4096) { DH_free(dh4096); dh4096 = NULL; }
+#endif
+#ifdef ECDH_CLEANUP
+	if (ecdh_cache) {
+		EC_KEY_free(ecdh_cache);
+		ecdh_cache = NULL;
+	}
+#endif
+}
 
 #ifndef HAVE_SSL_CTX_USE_CERTIFICATE_CHAIN_MEM
 
@@ -178,11 +220,16 @@ long SSL_CTX_set_ecdh_auto(SSL_CTX *ctx, int onoff)
 int
 SSL_CTX_use_certificate_chain_mem(SSL_CTX *ctx, void *data, int data_len)
 {
-	pem_password_cb *psw_fn = ctx->default_passwd_callback;
-	void *psw_arg = ctx->default_passwd_callback_userdata;
+	pem_password_cb *psw_fn = NULL;
+	void *psw_arg = NULL;
 	X509 *cert;
 	BIO *bio = NULL;
 	int ok;
+
+#ifdef USE_LIBSSL_OLD
+	psw_fn = ctx->default_passwd_callback;
+	psw_arg = ctx->default_passwd_callback_userdata;
+#endif
 
 	ERR_clear_error();
 
@@ -228,7 +275,7 @@ SSL_CTX_use_certificate_chain_mem(SSL_CTX *ctx, void *data, int data_len)
 		if (!ok)
 			X509_free(cert);
 	}
-failed:
+ failed:
 	if (bio)
 		BIO_free(bio);
 	return 0;
@@ -245,6 +292,7 @@ failed:
 int SSL_CTX_load_verify_mem(SSL_CTX *ctx, void *data, int data_len)
 {
 	STACK_OF(X509_INFO) *stack = NULL;
+	X509_STORE *store;
 	X509_INFO *info;
 	int nstack, i, ret = 0, got = 0;
 	BIO *bio;
@@ -260,18 +308,19 @@ int SSL_CTX_load_verify_mem(SSL_CTX *ctx, void *data, int data_len)
 		goto failed;
 
 	/* Loop over stack, add certs and revocation records to store */
+	store = SSL_CTX_get_cert_store(ctx);
 	nstack = sk_X509_INFO_num(stack);
 	for (i = 0; i < nstack; i++) {
 		info = sk_X509_INFO_value(stack, i);
-		if (info->x509 && !X509_STORE_add_cert(ctx->cert_store, info->x509))
+		if (info->x509 && !X509_STORE_add_cert(store, info->x509))
 			goto failed;
-		if (info->crl && !X509_STORE_add_crl(ctx->cert_store, info->crl))
+		if (info->crl && !X509_STORE_add_crl(store, info->crl))
 			goto failed;
 		if (info->x509 || info->crl)
 			got = 1;
 	}
 	ret = got;
-failed:
+ failed:
 	if (bio)
 		BIO_free(bio);
 	if (stack)
@@ -283,13 +332,127 @@ failed:
 
 #endif
 
+#ifndef HAVE_ASN1_TIME_PARSE
+
+static int
+parse2num(const char **str_p, int min, int max)
+{
+	const char *s = *str_p;
+	if (s && s[0] >= '0' && s[0] <= '9' && s[1] >= '0' && s[1] <= '9') {
+		int val = (s[0] - '0') * 10 + (s[1] - '0');
+		if (val >= min && val <= max) {
+			*str_p += 2;
+			return val;
+		}
+	}
+	*str_p = NULL;
+	return 0;
+}
+
+int
+asn1_time_parse(const char *src, size_t len, struct tm *tm, int mode)
+{
+	char buf[16];
+	const char *s = buf;
+	int utctime;
+	int year;
+
+	memset(tm, 0, sizeof *tm);
+
+	if (mode != 0)
+		return -1;
+
+	/*
+	 * gentime: YYYYMMDDHHMMSSZ
+	 * utctime: YYMMDDHHMM(SS)(Z)
+	 */
+	if (len == 15) {
+		utctime = 0;
+	} else if (len > 8 && len < 15) {
+		utctime = 1;
+	} else {
+		return -1;
+	}
+	memcpy(buf, src, len);
+	buf[len] = '\0';
+
+	year = parse2num(&s, 0, 99);
+	if (utctime) {
+		if (year < 50)
+			year = 2000 + year;
+		else
+			year = 1900 + year;
+	} else {
+		year = year*100 + parse2num(&s, 0, 99);
+	}
+	tm->tm_year = year - 1900;
+	tm->tm_mon = parse2num(&s, 1, 12) - 1;
+	tm->tm_mday = parse2num(&s, 1, 31);
+	tm->tm_hour = parse2num(&s, 0, 23);
+	tm->tm_min = parse2num(&s, 0, 59);
+	if (utctime) {
+		if (s && s[0] != 'Z' && s[0] != '\0')
+			tm->tm_sec = parse2num(&s, 0, 61);
+	} else {
+		tm->tm_sec = parse2num(&s, 0, 61);
+	}
+
+	if (s) {
+		if (s[0] == '\0')
+			goto good;
+		if (s[0] == 'Z' && s[1] == '\0')
+			goto good;
+	}
+	return -1;
+ good:
+	return utctime ? V_ASN1_UTCTIME : V_ASN1_GENERALIZEDTIME;
+}
+
+#endif /* HAVE_ASN1_TIME_PARSE */
+
+int
+tls_asn1_parse_time(struct tls *ctx, const ASN1_TIME *asn1time, time_t *dst)
+{
+	struct tm tm;
+	int res;
+	time_t tval;
+
+	*dst = 0;
+	if (!asn1time)
+		return 0;
+	if (asn1time->type != V_ASN1_GENERALIZEDTIME &&
+	    asn1time->type != V_ASN1_UTCTIME) {
+		tls_set_errorx(ctx, "Invalid time object type: %d", asn1time->type);
+		return -1;
+	}
+
+	res = asn1_time_parse((char*)asn1time->data, asn1time->length, &tm, 0);
+	if (res == -1) {
+		tls_set_errorx(ctx, "Invalid asn1 time");
+		return -1;
+	}
+
+	tval = timegm(&tm);
+	if (tval == (time_t)-1) {
+		tls_set_error(ctx, "Cannot convert asn1 time");
+		return -1;
+	}
+	*dst = tval;
+	return 0;
+}
+
 #else /* !USUAL_LIBSSL_FOR_TLS */
+
+#include <usual/tls/tls_cert.h>
 
 /*
  * Install empty functions when openssl is not available.
  */
 
 int tls_init(void) { return -1; }
+void tls_deinit(void) { }
+
+const char *tls_backend_version(void) { return "unsupported"; }
 
 const char *tls_error(struct tls *_ctx) { return "No TLS support"; }
 
@@ -306,15 +469,24 @@ int tls_config_set_dheparams(struct tls_config *_config, const char *_params) { 
 int tls_config_set_ecdhecurve(struct tls_config *_config, const char *_name) { return -1; }
 int tls_config_set_key_file(struct tls_config *_config, const char *_key_file) { return -1; }
 int tls_config_set_key_mem(struct tls_config *_config, const uint8_t *_key, size_t _len) { return -1; }
+int tls_config_set_ocsp_stapling_file(struct tls_config *_config, const char *_blob_file) { return -1; }
+int tls_config_set_ocsp_stapling_mem(struct tls_config *_config, const uint8_t *_blob, size_t _len) { return -1; }
 void tls_config_set_protocols(struct tls_config *_config, uint32_t _protocols) {}
 void tls_config_set_verify_depth(struct tls_config *_config, int _verify_depth) {}
 
-void tls_config_clear_keys(struct tls_config *_config) {}
-int tls_config_parse_protocols(uint32_t *_protocols, const char *_protostr) { return -1; }
+void tls_config_prefer_ciphers_client(struct tls_config *_config) {}
+void tls_config_prefer_ciphers_server(struct tls_config *_config) {}
 
 void tls_config_insecure_noverifycert(struct tls_config *_config) {}
 void tls_config_insecure_noverifyname(struct tls_config *_config) {}
+void tls_config_insecure_noverifytime(struct tls_config *_config) {}
 void tls_config_verify(struct tls_config *_config) {}
+
+void tls_config_verify_client(struct tls_config *_config) {}
+void tls_config_verify_client_optional(struct tls_config *_config) {}
+
+void tls_config_clear_keys(struct tls_config *_config) {}
+int tls_config_parse_protocols(uint32_t *_protocols, const char *_protostr) { return -1; }
 
 struct tls *tls_client(void) { return NULL; }
 struct tls *tls_server(void) { return NULL; }
@@ -328,15 +500,41 @@ int tls_connect(struct tls *_ctx, const char *_host, const char *_port) { return
 int tls_connect_fds(struct tls *_ctx, int _fd_read, int _fd_write, const char *_servername) { return -1; }
 int tls_connect_servername(struct tls *_ctx, const char *_host, const char *_port, const char *_servername) { return -1; }
 int tls_connect_socket(struct tls *_ctx, int _s, const char *_servername) { return -1; }
-int tls_read(struct tls *_ctx, void *_buf, size_t _buflen, size_t *_outlen) { return -1; }
-int tls_write(struct tls *_ctx, const void *_buf, size_t _buflen, size_t *_outlen) { return -1; }
+int tls_handshake(struct tls *_ctx) { return -1; }
+ssize_t tls_read(struct tls *_ctx, void *_buf, size_t _buflen) { return -1; }
+ssize_t tls_write(struct tls *_ctx, const void *_buf, size_t _buflen) { return -1; }
 int tls_close(struct tls *_ctx) { return -1; }
 
-ssize_t tls_get_connection_info(struct tls *ctx, char *buf, size_t buflen) { return -1; }
+int tls_peer_cert_provided(struct tls *ctx) { return 0; }
+int tls_peer_cert_contains_name(struct tls *ctx, const char *name) { return 0; }
+
+const char *tls_peer_cert_hash(struct tls *_ctx) { return NULL; }
+const char *tls_peer_cert_issuer(struct tls *ctx) { return NULL; }
+const char *tls_peer_cert_subject(struct tls *ctx) { return NULL; }
+time_t tls_peer_cert_notbefore(struct tls *ctx) { return (time_t)-1; }
+time_t tls_peer_cert_notafter(struct tls *ctx) { return (time_t)-1; }
+
+const char *tls_conn_version(struct tls *ctx) { return "n/a"; }
+const char *tls_conn_cipher(struct tls *ctx) { return "n/a"; }
 
 uint8_t *tls_load_file(const char *_file, size_t *_len, char *_password) { return NULL; }
 
+ssize_t tls_get_connection_info(struct tls *ctx, char *buf, size_t buflen) { return -1; }
+
+int tls_ocsp_refresh_stapling(struct tls **ocsp_ctx_p, int *async_fd_p, struct tls_config *config) { return -1; }
+int tls_ocsp_check_peer(struct tls **ocsp_ctx_p, int *async_fd_p, struct tls *client) { return -1; }
+int tls_get_ocsp_info(struct tls *ctx, int *response_status, int *cert_status, int *crl_reason,
+		      time_t *this_update, time_t *next_update, time_t *revoction_time,
+		      const char **result_text) { return -1; }
+
+int tls_ocsp_check_peer_request(struct tls **ocsp_ctx_p, struct tls *target,
+				char **ocsp_url, void **request_blob, size_t *request_size) { return -1; }
+
+int tls_ocsp_refresh_stapling_request(struct tls **ocsp_ctx_p, struct tls_config *config,
+				      char **ocsp_url, void **request_blob, size_t *request_size) { return -1; }
+
 int tls_get_peer_cert(struct tls *ctx, struct tls_cert **cert_p, const char *algo) { *cert_p = NULL; return -1; }
 void tls_cert_free(struct tls_cert *cert) {}
+
 
 #endif /* !USUAL_LIBSSL_FOR_TLS */

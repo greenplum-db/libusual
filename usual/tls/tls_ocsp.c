@@ -183,6 +183,9 @@ tls_ocsp_get_certid(X509 *main_cert, STACK_OF(X509) *extra_certs, SSL_CTX *ssl_c
 	store = SSL_CTX_get_cert_store(ssl_ctx);
 	if (!store)
 		goto error;
+	storectx = X509_STORE_CTX_new();
+	if (!storectx)
+		goto error;
 	ok = X509_STORE_CTX_init(storectx, store, main_cert, extra_certs);
 	if (ok != 1)
 		goto error;
@@ -539,7 +542,7 @@ tls_ocsp_setup(struct tls **ocsp_ctx_p, struct tls_config *config, struct tls *t
 {
 	struct tls *ctx;
 	struct tls_ocsp_query *q;
-	int ret;
+	int ret = -1;
 	STACK_OF(OPENSSL_STRING) *ocsp_urls;
 
 	ctx = tls_ocsp_client_new();
@@ -763,7 +766,7 @@ tls_ocsp_connection_setup(struct tls *ctx)
 		}
 
 		SSL_CTX_set_options(q->ssl_ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
-		SSL_CTX_clear_options(q->ssl_ctx, SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1 | SSL_OP_NO_TLSv1_2);
+		SSL_CTX_clear_options(q->ssl_ctx, SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1 | SSL_OP_NO_TLSv1_2 | SSL_OP_NO_TLSv1_3);
 		SSL_CTX_set_cipher_list(q->ssl_ctx, TLS_CIPHERS_COMPAT);
 		SSL_CTX_set_mode(q->ssl_ctx, SSL_MODE_AUTO_RETRY);
 

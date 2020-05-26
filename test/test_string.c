@@ -369,7 +369,7 @@ static const char *lshow(const struct StrList *sl)
 static void test_strlist(void *p)
 {
 	struct StrList *sl = NULL;
-	const char *s;
+	char *s;
 	sl = strlist_new(NULL);
 	str_check(lshow(sl), "");
 	strlist_append(sl, "1");
@@ -500,7 +500,7 @@ static const char *wrap_strtonum(const char *s, long long minval, long long maxv
 	if (res1 != res)
 		return "EH";
 	if (!err) {
-		snprintf(buf, sizeof buf, "%lld", res);
+		snprintf(buf, sizeof buf, "%" PRId64, (int64_t)res);
 		return buf;
 	}
 	snprintf(buf, sizeof buf, "E:%s", err);
@@ -576,6 +576,10 @@ static void test_strsep(void *p)
 end:;
 }
 
+#pragma GCC diagnostic push
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 7
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+#endif
 
 static void test_snprintf(void *p)
 {
@@ -589,6 +593,8 @@ static void test_snprintf(void *p)
 	int_check(snprintf(buf, 12, "%s", longstr), 10);
 end:;
 }
+
+#pragma GCC diagnostic pop
 
 static void test_asprintf(void *p)
 {

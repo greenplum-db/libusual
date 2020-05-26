@@ -318,14 +318,26 @@ tls_configure_keypair(struct tls *ctx, SSL_CTX *ssl_ctx,
 	if (keypair->cert_file != NULL) {
 		if (SSL_CTX_use_certificate_chain_file(ssl_ctx,
 		    keypair->cert_file) != 1) {
-			tls_set_errorx(ctx, "failed to load certificate file");
+			const char *errstr = "unknown error";
+			unsigned long err;
+
+			if ((err = ERR_peek_error()) != 0)
+				errstr = ERR_reason_error_string(err);
+			tls_set_errorx(ctx, "failed to load certificate file \"%s\": %s",
+				       keypair->cert_file, errstr);
 			goto err;
 		}
 	}
 	if (keypair->key_file != NULL) {
 		if (SSL_CTX_use_PrivateKey_file(ssl_ctx,
 		    keypair->key_file, SSL_FILETYPE_PEM) != 1) {
-			tls_set_errorx(ctx, "failed to load private key file");
+			const char *errstr = "unknown error";
+			unsigned long err;
+
+			if ((err = ERR_peek_error()) != 0)
+				errstr = ERR_reason_error_string(err);
+			tls_set_errorx(ctx, "failed to load private key file \"%s\": %s",
+				       keypair->key_file, errstr);
 			goto err;
 		}
 	}
@@ -361,10 +373,17 @@ tls_info_callback(const SSL *ssl, int where, int rc)
 	}
 #endif
 
-	/* detect renegotation on established connection */
-	if (where & SSL_CB_HANDSHAKE_START) {
-		if (ctx->state & TLS_HANDSHAKE_COMPLETE)
-			ctx->state |= TLS_DO_ABORT;
+	/*
+	 * Detect renegotation on established connection.  With
+	 * TLSv1.3 this is no longer applicable, and the code below
+	 * would erroneously abort with OpenSSL 1.1.1 and 1.1.1a if
+	 * using TLSv1.3, so skip it altogether in that case.
+	 */
+	if (SSL_version(ssl) < TLS1_3_VERSION) {
+		if (where & SSL_CB_HANDSHAKE_START) {
+			if (ctx->state & TLS_HANDSHAKE_COMPLETE)
+				ctx->state |= TLS_DO_ABORT;
+		}
 	}
 }
 
@@ -397,6 +416,7 @@ tls_configure_ssl(struct tls *ctx)
 	SSL_CTX_clear_options(ctx->ssl_ctx, SSL_OP_NO_TLSv1);
 	SSL_CTX_clear_options(ctx->ssl_ctx, SSL_OP_NO_TLSv1_1);
 	SSL_CTX_clear_options(ctx->ssl_ctx, SSL_OP_NO_TLSv1_2);
+	SSL_CTX_clear_options(ctx->ssl_ctx, SSL_OP_NO_TLSv1_3);
 
 	if ((ctx->config->protocols & TLS_PROTOCOL_TLSv1_0) == 0)
 		SSL_CTX_set_options(ctx->ssl_ctx, SSL_OP_NO_TLSv1);
@@ -404,6 +424,8 @@ tls_configure_ssl(struct tls *ctx)
 		SSL_CTX_set_options(ctx->ssl_ctx, SSL_OP_NO_TLSv1_1);
 	if ((ctx->config->protocols & TLS_PROTOCOL_TLSv1_2) == 0)
 		SSL_CTX_set_options(ctx->ssl_ctx, SSL_OP_NO_TLSv1_2);
+	if ((ctx->config->protocols & TLS_PROTOCOL_TLSv1_3) == 0)
+		SSL_CTX_set_options(ctx->ssl_ctx, SSL_OP_NO_TLSv1_3);
 
 	if (ctx->config->ciphers != NULL) {
 		if (SSL_CTX_set_cipher_list(ctx->ssl_ctx,
@@ -446,7 +468,12 @@ tls_configure_ssl_verify(struct tls *ctx, int verify)
 		}
 	} else if (SSL_CTX_load_verify_locations(ctx->ssl_ctx,
 	    ctx->config->ca_file, ctx->config->ca_path) != 1) {
-		tls_set_errorx(ctx, "ssl verify setup failure");
+		const char *errstr = "unknown error";
+		unsigned long err;
+
+		if ((err = ERR_peek_error()) != 0)
+			errstr = ERR_reason_error_string(err);
+		tls_set_errorx(ctx, "failed to load CA: %s", errstr);
 		goto err;
 	}
 	if (ctx->config->verify_depth >= 0)

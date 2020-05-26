@@ -1,5 +1,4 @@
 #include <usual/tls/tls.h>
-#include <usual/event.h>
 #include <usual/socket.h>
 #include <usual/string.h>
 #include <usual/signal.h>
@@ -9,6 +8,8 @@
 
 #include <string.h>
 #include <stdarg.h>
+
+#include <event.h>
 
 #include "test_common.h"
 
@@ -158,6 +159,12 @@ static const char *create_worker(struct Worker **w_p, int is_server, ...)
 			return "tls_client failed";
 	}
 
+	/*
+	 * use TLSv1.2 unless overridden below, for consistent
+	 * messages, ciphers, etc.
+	 */
+	tls_config_set_protocols(w->config, TLS_PROTOCOL_TLSv1_2);
+
 	va_start(ap, is_server);
 	while (1) {
 		k = va_arg(ap, char *);
@@ -267,7 +274,7 @@ static const char *create_worker(struct Worker **w_p, int is_server, ...)
 static const char *do_handshake(struct Worker *w, int fd);
 static const char *wait_for_event(struct Worker *w, short flag);
 
-static void worker_cb(int fd, short flags, void *arg)
+static void worker_cb(evutil_socket_t fd, short flags, void *arg)
 {
 	struct Worker *w = arg;
 	const char *err;
@@ -409,14 +416,14 @@ static void show_dname(char *buf, size_t buflen, const struct tls_cert_dname *dn
 static const char *isotime(char *dst, size_t max, time_t t)
 {
 	static char buf[32];
-	struct tm tm;
+	struct tm *tm;
 	if (!dst) {
 		dst = buf;
 		max = sizeof buf;
 	}
 	memset(&tm, 0, sizeof tm);
-	gmtime_r(&t, &tm);
-	strftime(dst, max, "%Y-%m-%dT%H:%M:%SZ", &tm);
+	tm = gmtime(&t);
+	strftime(dst, max, "%Y-%m-%dT%H:%M:%SZ", tm);
 	return dst;
 }
 
@@ -847,7 +854,7 @@ static void test_cert_info(void *z)
 	str_check(run_case(client, server),
 		  "Subject: /CN=client2/C=XX/ST=State2/L=City2/O=Org2"
 		  " Issuer: /CN=TestCA2"
-		  " Serial: 1387724136048036785122419970010419099185643835502"
+		  " Serial: 693862068024018392561209985005209549592821917751"
 		  " NotBefore: 2010-01-01T08:05:00Z"
 		  " NotAfter: 2060-12-31T23:55:00Z");
 
@@ -857,7 +864,7 @@ static void test_cert_info(void *z)
 	str_check(run_case(client, server),
 		  "Subject: /CN=complex1.com/ST=様々な論争を引き起こしてきた。/L=Kõzzä"
 		  " Issuer: /CN=TestCA1/C=AA/ST=State1/L=City1/O=Org1"
-		  " Serial: 1113692385315072860785465640275941003895485612482"
+		  " Serial: 556846192657536430392732820137970501947742806241"
 		  " NotBefore: 2010-01-01T08:05:00Z"
 		  " NotAfter: 2060-12-31T23:55:00Z");
 
@@ -867,7 +874,7 @@ static void test_cert_info(void *z)
 	str_check(run_case(client, server),
 		  "Subject: /CN=complex2.com/ST=様々な論争を引き起こしてきた。/L=Kõzzä"
 		  " Issuer: /CN=TestCA2"
-		  " Serial: 344032136906054686761742495217219742691739762030"
+		  " Serial: 172016068453027343380871247608609871345869881015"
 		  " NotBefore: 2010-01-01T08:05:00Z"
 		  " NotAfter: 2060-12-31T23:55:00Z");
 end:;
@@ -979,12 +986,11 @@ static const char *run_time(const char *val)
 	ASN1_TIME tmp;
 	time_t t = 0;
 	static char buf[128];
-	struct tm *tm, tmbuf;
+	struct tm *tm;
 	struct tls *ctx;
 	int err;
 
 	memset(&tmp, 0, sizeof tmp);
-	memset(&tmbuf, 0, sizeof tmbuf);
 
 	tmp.data = (unsigned char*)val+2;
 	tmp.length = strlen(val+2);
@@ -1007,7 +1013,7 @@ static const char *run_time(const char *val)
 	}
 	tls_free(ctx);
 
-	tm = gmtime_r(&t, &tmbuf);
+	tm = gmtime(&t);
 	if (!tm)
 		return "E-GMTIME";
 	strftime(buf, sizeof buf, "%Y-%m-%d %H:%M:%S GMT", tm);

@@ -20,7 +20,9 @@
 #include <usual/err.h>
 #include <usual/string.h>
 
-#ifdef HAVE_LINUX_RANDOM_H
+#if defined(HAVE_GETRANDOM)
+#include <sys/random.h>
+#elif defined(HAVE_LINUX_RANDOM_H)
 #include <sys/syscall.h>
 #include <linux/types.h>
 #include <linux/random.h>
@@ -62,7 +64,7 @@ static int getentropy_win32(void *dst, size_t len)
 
 	lib = LoadLibrary("advapi32.dll");
 	if (lib) {
-		fn = (rtlgenrandom_t)GetProcAddress(lib, "SystemFunction036");
+		fn = (rtlgenrandom_t)(void(*)(void))GetProcAddress(lib, "SystemFunction036");
 		if (fn && fn(dst, len))
 			res = 0;
 		FreeLibrary(lib);

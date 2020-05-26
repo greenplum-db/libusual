@@ -9,10 +9,12 @@ dnl  AC_USUAL_CASSERT
 dnl  AC_USUAL_WERROR
 dnl  AC_USUAL_DEBUG
 dnl Optional features:
-dnl  AC_USUAL_LIBEVENT / AC_USUAL_LIBEVENT_OPT
 dnl  AC_USUAL_UREGEX
 dnl  AC_USUAL_GETADDRINFO_A
 dnl  AC_USUAL_TLS
+
+dnl Catching missing pkg-config
+m4_pattern_forbid([^PKG_])dnl
 
 dnl
 dnl  AC_USUAL_INIT:
@@ -46,9 +48,8 @@ dnl Set the flags before any feature tests.
 if test "$PORTNAME" = "win32"; then
   AC_DEFINE([WIN32_LEAN_AND_MEAN], [1], [Define to request cleaner win32 headers.])
   AC_DEFINE([WINVER], [0x0600], [Define to max win32 API version (0x0600=Vista).])
-else
-  AC_DEFINE([_GNU_SOURCE], [1], [Define to get working glibc.])
 fi
+AC_DEFINE([_GNU_SOURCE], [1], [Define to get some GNU functions in headers.])
 
 dnl Package-specific data
 AC_SUBST([pkgdatadir], ['${datarootdir}'/${PACKAGE_TARNAME}])
@@ -108,7 +109,7 @@ if test x"$GCC" = xyes; then
   flags="$flags -Wmissing-prototypes -Wpointer-arith -Wendif-labels"
   flags="$flags -Wdeclaration-after-statement -Wold-style-definition"
   flags="$flags -Wstrict-prototypes -Wundef -Wformat=2"
-  flags="$flags -Wuninitialized"
+  flags="$flags -Wuninitialized -Wmissing-format-attribute"
   for f in $flags; do
     CFLAGS="$good_CFLAGS $WFLAGS $f"
     AC_COMPILE_IFELSE([AC_LANG_SOURCE([void foo(void){}])],
@@ -184,7 +185,7 @@ dnl  AC_USUAL_HEADER_CHECK:  Basic headers
 dnl
 AC_DEFUN([AC_USUAL_HEADER_CHECK], [
 AC_CHECK_HEADERS([inttypes.h stdbool.h unistd.h sys/time.h])
-AC_CHECK_HEADERS([sys/socket.h poll.h sys/poll.h sys/un.h])
+AC_CHECK_HEADERS([sys/socket.h poll.h sys/un.h])
 AC_CHECK_HEADERS([arpa/inet.h netinet/in.h netinet/tcp.h])
 AC_CHECK_HEADERS([sys/param.h sys/uio.h pwd.h grp.h])
 AC_CHECK_HEADERS([sys/wait.h sys/mman.h syslog.h netdb.h dlfcn.h])
@@ -299,66 +300,6 @@ AC_SUBST(enable_debug)
 
 
 dnl
-dnl  AC_USUAL_LIBEVENT:  --with-libevent
-dnl
-dnl  AC_USUAL_LIBEVENT - prefer-yes:
-dnl     default   - search for libevent, error if not found
-dnl     --with    - search for libevent, error if not found
-dnl     --without - use libusual
-dnl
-dnl  AC_USUAL_LIBEVENT_OPT - prefer-no:
-dnl     default   - use libusual
-dnl     --with    - search for libevent, error if not found
-dnl     --without - use libusual
-dnl
-AC_DEFUN([AC_USUAL_LIBEVENT_OPT], [AC_USUAL_LIBEVENT(1)])
-AC_DEFUN([AC_USUAL_LIBEVENT], [
-ifelse([$#], [0], [levent=yes], [levent=no])
-AC_MSG_CHECKING([for libevent])
-AC_ARG_WITH(libevent,
-  AC_HELP_STRING([--with-libevent=prefix],[Specify where libevent is installed]),
-  [ if test "$withval" = "no"; then
-      levent=no
-    elif test "$withval" = "yes"; then
-      levent=yes
-    else
-      levent=yes
-      CPPFLAGS="$CPPFLAGS -I$withval/include"
-      LDFLAGS="$LDFLAGS -L$withval/lib"
-    fi
-  ], [])
-
-if test "$levent" = "no"; then
-  AC_MSG_RESULT([using usual/event])
-  AC_DEFINE(HAVE_EVENT_LOOPBREAK, 1, [usual/event.h has it.])
-  AC_DEFINE(HAVE_EVENT_BASE_NEW, 1, [usual/event.h has it.])
-  have_libevent=no
-else # libevent
-AC_DEFINE(HAVE_LIBEVENT, 1, [Use real libevent.])
-LIBS="-levent $LIBS"
-AC_LINK_IFELSE([AC_LANG_SOURCE([
-  #include <sys/types.h>
-  #include <sys/time.h>
-  #include <stdio.h>
-  #include <event.h>
-  int main(void) {
-    struct event ev;
-    event_init();
-    event_set(&ev, 1, EV_READ, NULL, NULL);
-    /* this checks for 1.2+ */
-    event_base_free(NULL);
-  } ])],
-[AC_MSG_RESULT([found])],
-[AC_MSG_ERROR([not found, cannot proceed])])
-
-AC_CHECK_FUNCS(event_loopbreak event_base_new evdns_base_new)
-have_libevent=yes
-fi # libevent
-AC_SUBST(have_libevent)
-
-]) dnl  AC_USUAL_LIBEVENT
-
-dnl
 dnl  AC_USUAL_UREGEX:  --with-uregex
 dnl
 dnl    Allow override of system regex
@@ -367,7 +308,7 @@ AC_DEFUN([AC_USUAL_UREGEX], [
 AC_MSG_CHECKING([whether to force internal regex])
 uregex=no
 AC_ARG_WITH(uregex,
-  AC_HELP_STRING([--with-uregex],[Force use of internal regex]),
+  AC_HELP_STRING([--with-uregex],[force use of internal regex]),
   [ if test "$withval" = "yes"; then
       uregex=yes
     fi ], [])
@@ -430,7 +371,8 @@ TLS_LIBS=""
 
 AC_MSG_CHECKING([for OpenSSL])
 AC_ARG_WITH(openssl,
-  AC_HELP_STRING([--with-openssl=prefix], [Specify where OpenSSL is installed]),
+  [AC_HELP_STRING([--without-openssl], [do not build with OpenSSL support])
+AC_HELP_STRING([--with-openssl@<:@=PREFIX@:>@], [specify where OpenSSL is installed])],
   [ if test "$withval" = "no"; then
       tls_support=no
     elif test "$withval" = "yes"; then
@@ -460,7 +402,7 @@ if test "$tls_support" = "auto" -o "$tls_support" = "libssl"; then
   LIBS="$TLS_LIBS $LIBS"
   AC_LINK_IFELSE([
     AC_LANG_PROGRAM([[#include <openssl/ssl.h>]],
-                    [[SSL_CTX *ctx = SSL_CTX_new(TLSv1_2_method());]])],
+                    [[SSL_CTX *ctx = SSL_CTX_new(SSLv23_method());]])],
     [ tls_support=yes; AC_MSG_RESULT([found])],
     [ AC_MSG_ERROR([not found]) ])
   dnl check LibreSSL-only APIs
@@ -473,7 +415,7 @@ if test "$tls_support" = "auto" -o "$tls_support" = "libssl"; then
   cafile=auto
   AC_MSG_CHECKING([for root CA certs])
   AC_ARG_WITH(root-ca-file,
-    AC_HELP_STRING([--with-root-ca-file=cafile], [Specify where root CA certs are.]),
+    AC_HELP_STRING([--with-root-ca-file=FILE], [specify where the root CA certificates are]),
     [ if test "$withval" = "no"; then
         :
       elif test "$withval" = "yes"; then

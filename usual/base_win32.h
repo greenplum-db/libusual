@@ -61,7 +61,7 @@
 #define setsid() getpid()
 #define setgid(x) (-1)
 #define setuid(x) (-1)
-#define fork() (-1)
+#define fork() (errno = ENOSYS, -1)
 #define geteuid() getuid()
 static inline int setgroups(int ngroups, const gid_t *gidsets) { errno = EINVAL; return -1; }
 #define chown(f, u, g) (-1)
@@ -156,12 +156,5 @@ static inline struct group *getgrgid(gid_t gid) { return NULL; }
 #define PRIX64	"I64X"
 
 #endif
-
-#define PRIdZ	"Id"
-#define PRIiZ	"Ii"
-#define PRIoZ	"Io"
-#define PRIuZ	"Iu"
-#define PRIxZ	"Ix"
-#define PRIXZ	"IX"
 
 #endif

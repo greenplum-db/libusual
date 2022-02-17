@@ -1,0 +1,63 @@
+env:
+  DEBIAN_FRONTEND: noninteractive
+  LANG: C
+
+task:
+  name: Linux (Debian/Ubuntu)
+  matrix:
+    - container:
+        image: ubuntu:20.04
+    - container:
+        image: ubuntu:20.04
+      env:
+        configure_args: '--enable-cassert'
+    - container:
+        image: ubuntu:20.04
+      env:
+        configure_args: '--enable-cassert --with-uregex'
+    - container:
+        image: ubuntu:20.04
+      env:
+        CPPFLAGS: -DUSE_SYSTEMD
+        LIBS: -lsystemd
+    - container:
+        image: ubuntu:20.04
+      env:
+        CC: clang
+    - container:
+        image: ubuntu:20.04
+      env:
+        CFLAGS: -fno-sanitize-recover=all -fsanitize=undefined -fsanitize-address-use-after-scope -fno-sanitize=shift
+    - container:
+        image: ubuntu:20.04
+      env:
+        use_scan_build: yes
+    - container:
+        image: ubuntu:18.04
+    - container:
+        image: ubuntu:16.04
+    - container:
+        image: ubuntu:14.04
+    - container:
+        image: debian:stable
+    - container:
+        image: debian:oldstable
+  setup_script:
+    - apt-get update
+    - pkgs="autoconf automake libevent-dev libssl-dev libtool make pkg-config"
+    - case $CC in clang) pkgs="$pkgs clang";; esac
+    - case $CPPFLAGS in *USE_SYSTEMD*) pkgs="$pkgs libsystemd-dev";; esac
+    - if [ x"$use_scan_build" = x"yes" ]; then pkgs="$pkgs clang-tools"; fi
+    - apt-get -y install $pkgs
+  build_script:
+    - ./autogen.sh
+    - ${use_scan_build:+scan-build} ./configure --prefix=$HOME/install --enable-werror $configure_args
+    - ${use_scan_build:+scan-build} make
+  test_script:
+    - make check
+  install_script:
+    - make install
+  always:
+    configure_artifacts:
+      path: "config.log"
+      type: text/plain

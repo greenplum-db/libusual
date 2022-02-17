@@ -31,6 +31,8 @@ if test "$srcdir" != "."; then
   echo "include $srcdir/Makefile" > Makefile
 fi
 
+AC_CANONICAL_HOST
+
 AC_MSG_CHECKING([target host type])
 xhost="$host_alias"
 if test "x$xhost" = "x"; then
@@ -69,7 +71,7 @@ AC_PROG_CC_STDC
 AC_PROG_CPP
 dnl Check if compiler supports __func__
 AC_CACHE_CHECK([whether compiler supports __func__], pgac_cv_funcname_func,
-  [AC_TRY_COMPILE([#include <stdio.h>], [printf("%s\n", __func__);],
+  [AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <stdio.h>]], [[printf("%s\n", __func__);]])],
     [pgac_cv_funcname_func=yes], [pgac_cv_funcname_func=no])])
 if test x"$pgac_cv_funcname_func" = xyes ; then
   AC_DEFINE(HAVE_FUNCNAME__FUNC, 1,
@@ -253,7 +255,7 @@ dnl
 dnl  AC_USUAL_CASSERT:  --enable-cassert switch to set macro CASSERT
 dnl
 AC_DEFUN([AC_USUAL_CASSERT], [
-AC_ARG_ENABLE(cassert, AC_HELP_STRING([--enable-cassert],[turn on assert checking in code]))
+AC_ARG_ENABLE(cassert, AS_HELP_STRING([--enable-cassert],[turn on assert checking in code]))
 AC_MSG_CHECKING([whether to enable asserts])
 if test "$enable_cassert" = "yes"; then
   AC_DEFINE(CASSERT, 1, [Define to enable assert checking])
@@ -268,7 +270,7 @@ dnl
 dnl  AC_USUAL_WERROR:  --enable-werror switch to turn warnings into errors
 dnl
 AC_DEFUN([AC_USUAL_WERROR], [
-AC_ARG_ENABLE(werror, AC_HELP_STRING([--enable-werror],[add -Werror to CFLAGS]))
+AC_ARG_ENABLE(werror, AS_HELP_STRING([--enable-werror],[add -Werror to CFLAGS]))
 AC_MSG_CHECKING([whether to fail on warnings])
 if test "$enable_werror" = "yes"; then
   CFLAGS="$CFLAGS -Werror"
@@ -284,7 +286,7 @@ dnl  AC_USUAL_DEBUG:  --disable-debug switch to strip binary
 dnl
 AC_DEFUN([AC_USUAL_DEBUG], [
 AC_ARG_ENABLE(debug,
-  AC_HELP_STRING([--disable-debug],[strip binary]),
+  AS_HELP_STRING([--disable-debug],[strip binary]),
   [], [enable_debug=yes])
 AC_MSG_CHECKING([whether to build debug binary])
 if test "$enable_debug" = "yes"; then
@@ -308,7 +310,7 @@ AC_DEFUN([AC_USUAL_UREGEX], [
 AC_MSG_CHECKING([whether to force internal regex])
 uregex=no
 AC_ARG_WITH(uregex,
-  AC_HELP_STRING([--with-uregex],[force use of internal regex]),
+  AS_HELP_STRING([--with-uregex],[force use of internal regex]),
   [ if test "$withval" = "yes"; then
       uregex=yes
     fi ], [])
@@ -327,23 +329,24 @@ dnl
 AC_DEFUN([AC_USUAL_GETADDRINFO_A], [
 AC_SEARCH_LIBS(getaddrinfo_a, anl)
 AC_CACHE_CHECK([whether to use native getaddinfo_a], ac_cv_usual_glibc_gaia,
-  [AC_TRY_LINK([
+  [AC_LINK_IFELSE(
+  [AC_LANG_PROGRAM([[
 #include <stdio.h>
 #ifdef HAVE_NETDB_H
 #include <netdb.h>
 #endif
-], [
+]], [[
 #if __GLIBC_PREREQ(2,9)
 	getaddrinfo_a(0,NULL,0,NULL);
 #else
 	none or broken
 #endif
-], [ac_cv_usual_glibc_gaia=yes], [ac_cv_usual_glibc_gaia=no])])
+]])], [ac_cv_usual_glibc_gaia=yes], [ac_cv_usual_glibc_gaia=no])])
 
 if test x"$ac_cv_usual_glibc_gaia" = xyes ; then
   AC_DEFINE(HAVE_GETADDRINFO_A, 1, [Define to 1 if you have the getaddrinfo_a() function.])
 else
-  ACX_PTHREAD(, [AC_MSG_RESULT([Threads not available and fallback getaddrinfo_a() non-functional.])])
+  AX_PTHREAD(, [AC_MSG_RESULT([Threads not available and fallback getaddrinfo_a() non-functional.])])
   CC="$PTHREAD_CC"
   CFLAGS="$CFLAGS $PTHREAD_CFLAGS"
   LIBS="$LIBS $PTHREAD_LIBS"
@@ -371,8 +374,8 @@ TLS_LIBS=""
 
 AC_MSG_CHECKING([for OpenSSL])
 AC_ARG_WITH(openssl,
-  [AC_HELP_STRING([--without-openssl], [do not build with OpenSSL support])
-AC_HELP_STRING([--with-openssl@<:@=PREFIX@:>@], [specify where OpenSSL is installed])],
+  [AS_HELP_STRING([--without-openssl], [do not build with OpenSSL support])
+AS_HELP_STRING([--with-openssl@<:@=PREFIX@:>@], [specify where OpenSSL is installed])],
   [ if test "$withval" = "no"; then
       tls_support=no
     elif test "$withval" = "yes"; then
@@ -394,6 +397,8 @@ AC_HELP_STRING([--with-openssl@<:@=PREFIX@:>@], [specify where OpenSSL is instal
 dnl check if libssl works
 if test "$tls_support" = "auto" -o "$tls_support" = "libssl"; then
   AC_DEFINE(USUAL_LIBSSL_FOR_TLS, 1, [Use libssl for TLS.])
+  AC_DEFINE(OPENSSL_API_COMPAT, [0x00908000L],
+            [Define to the OpenSSL API version in use. This avoids deprecation warnings from newer OpenSSL versions.])
   tmp_LIBS="$LIBS"
   tmp_LDFLAGS="$LDFLAGS"
   tmp_CPPFLAGS="$CPPFLAGS"
@@ -415,7 +420,7 @@ if test "$tls_support" = "auto" -o "$tls_support" = "libssl"; then
   cafile=auto
   AC_MSG_CHECKING([for root CA certs])
   AC_ARG_WITH(root-ca-file,
-    AC_HELP_STRING([--with-root-ca-file=FILE], [specify where the root CA certificates are]),
+    AS_HELP_STRING([--with-root-ca-file=FILE], [specify where the root CA certificates are]),
     [ if test "$withval" = "no"; then
         :
       elif test "$withval" = "yes"; then

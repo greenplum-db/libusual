@@ -149,7 +149,7 @@ bool socket_set_keepalive(int fd, int onoff, int keepidle, int keepintvl, int ke
 /*
  * Convert sockaddr to string.  Supports ipv4, ipv6 and unix sockets.
  */
-const char *sa2str(const struct sockaddr *sa, char *dst, int dstlen)
+const char *sa2str(const struct sockaddr *sa, char *dst, size_t dstlen)
 {
 	const struct sockaddr_in *in;
 	const struct sockaddr_in6 *in6;
@@ -173,7 +173,10 @@ const char *sa2str(const struct sockaddr *sa, char *dst, int dstlen)
 		break;
 	case AF_UNIX:
 		un = (struct sockaddr_un *)sa;
-		snprintf(dst, dstlen, "unix:%s", un->sun_path);
+		if (un->sun_path[0] == '\0' && un->sun_path[1] != '\0')
+			snprintf(dst, dstlen, "unix:@%s", un->sun_path + 1);
+		else
+			snprintf(dst, dstlen, "unix:%s", un->sun_path);
 		break;
 	default:
 		snprintf(dst, dstlen, "sa2str(%d): unknown proto", sa->sa_family);
